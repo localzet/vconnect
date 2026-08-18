@@ -185,6 +185,68 @@ function send(channel: string, payload: unknown) {
   }
 }
 
+interface FabricBootstrapEdge {
+  id: string;
+  online: boolean;
+  serviceCalls?: Record<string, string>;
+}
+
+interface FabricBootstrapResponse {
+  edges?: FabricBootstrapEdge[];
+}
+
+function isFabricAuto(link: string): boolean {
+  return link.trim().toLowerCase().startsWith('fabric://');
+}
+
+async function resolveFabricSettings(settings: JoinerSettings): Promise<JoinerSettings> {
+  if (!isFabricAuto(settings.link)) return settings;
+  const controller = settings.fabricControllerUrl.trim().replace(/\/+$/, '');
+  const user = settings.fabricUserId.trim();
+  const credential = settings.fabricCredential.trim();
+  if (!controller || !/^https?:\/\//i.test(controller)) {
+    throw new Error('Fabric Controller URL must start with https:// (http:// is only for a trusted lab)');
+  }
+  if (!user || !credential) {
+    throw new Error('Fabric user and credential are required for fabric://auto');
+  }
+  const endpoint = `${controller}/v1/bootstrap?user=${encodeURIComponent(user)}`;
+  const response = await fetch(endpoint, {
+    method: 'GET',
+    headers: { 'Accept': 'application/json', 'X-Fabric-Credential': credential },
+    signal: AbortSignal.timeout(10_000),
+  });
+  const body = await response.text();
+  if (!response.ok) {
+    let detail = '';
+    try { detail = String((JSON.parse(body) as { error?: string }).error ?? ''); } catch {}
+    throw new Error(`Fabric Controller HTTP ${response.status}${detail ? `: ${detail}` : ''}`);
+  }
+  const payload = JSON.parse(body) as FabricBootstrapResponse;
+  const edge = (payload.edges ?? []).find((candidate) =>
+    candidate.online && Boolean(candidate.serviceCalls?.telemost?.trim()),
+  );
+  if (!edge?.serviceCalls?.telemost) {
+    throw new Error('No online RU edge with a Telemost control call');
+  }
+  send(IPC.LOG, `[fabric] selected RU edge ${edge.id}\n`);
+  return {
+    ...settings,
+    platform: 'telemost',
+    link: edge.serviceCalls.telemost.trim(),
+    serviceControl: true,
+  };
+}
+
+async function startSettings(settings: JoinerSettings): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const resolved = await resolveFabricSettings(settings);
+    return spawnJoiner(resolved);
+  } catch (error) {
+    return { ok: false, error: (error as Error).message };
+  }
+}
+
 function detectPlatformFromLink(link: string): JoinerSettings['platform'] {
   const lower = link.toLowerCase();
   if (lower.startsWith('wbstream://') || lower.includes('stream.wb.ru')) return 'wbstream';
@@ -249,7 +311,7 @@ function spawnJoiner(settings: JoinerSettings): { ok: boolean; error?: string } 
   if (settings.egressId) args.push('--egress-id', settings.egressId);
   if (settings.serviceControl) {
     args.push('--service-control');
-    args.push('--service-user-id', serviceUserId());
+    args.push('--service-user-id', settings.fabricUserId.trim() || serviceUserId());
     if (settings.serviceWorkPlatform === 'telemost' && hasServiceCookies()) {
       args.push('--service-cookie-file', serviceCookieFile());
       args.push('--service-cookie-platform', 'telemost');
@@ -272,7 +334,13 @@ function spawnJoiner(settings: JoinerSettings): { ok: boolean; error?: string } 
   const commandLine = [spawnCmd, ...loggedArgs].map((s) => (/\s/.test(s) ? `"${s}"` : s)).join(' ');
   send(IPC.LOG, `[main] spawning: ${commandLine}\n`);
   try {
-    joinerProcess = spawn(spawnCmd, spawnArgs, { windowsHide: true });
+    joinerProcess = spawn(spawnCmd, spawnArgs, {
+      windowsHide: true,
+      env: {
+        ...process.env,
+        VCONNECT_SERVICE_CREDENTIAL: settings.fabricCredential.trim() || process.env.VCONNECT_SERVICE_CREDENTIAL || '',
+      },
+    });
   } catch (err) {
     return { ok: false, error: `spawn failed: ${(err as Error).message}` };
   }
@@ -360,8 +428,9 @@ function spawnJoiner(settings: JoinerSettings): { ok: boolean; error?: string } 
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
       if (userRequestedStop || !lastSettings) return;
-      const r = spawnJoiner(lastSettings);
-      if (!r.ok) send(IPC.LOG, `[main] auto-reconnect spawn failed: ${r.error}\n`);
+      void startSettings(lastSettings).then((r) => {
+        if (!r.ok) send(IPC.LOG, `[main] auto-reconnect spawn failed: ${r.error}\n`);
+      });
     }, delayMs);
   });
   return { ok: true };
@@ -400,7 +469,7 @@ ipcMain.handle(IPC.START, async (_e, settings: JoinerSettings) => {
   retryCount = 0;
   lastSettings = settings;
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-  return spawnJoiner(settings);
+  return startSettings(settings);
 });
 
 ipcMain.handle(IPC.SERVICE_AUTH_STATUS, async () => ({

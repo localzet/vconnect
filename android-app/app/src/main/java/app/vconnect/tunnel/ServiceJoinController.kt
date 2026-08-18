@@ -33,6 +33,7 @@ class ServiceJoinController(
         onStatus = ::handleServiceStatus,
         serviceControl = ServiceControlConfig(
             userId = userId,
+            credential = Prefs.serviceCredential,
             cookieFile = ServiceCookieStore.cookieFile(context, userId, workPlatform).takeIf(File::isFile)?.absolutePath,
             cookiePlatform = workPlatform,
             workPlatform = workPlatform,

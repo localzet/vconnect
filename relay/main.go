@@ -38,6 +38,7 @@ func main() {
 	egressConfig := flag.String("egress-config", "", "creator mode: JSON egress profile config")
 	serviceControl := flag.Bool("service-control", false, "use this call as a control channel and request a work call")
 	serviceUserID := flag.String("service-user-id", "", "user id sent in service control messages")
+	serviceCredential := flag.String("service-credential", "", "credential for authenticated service control")
 	serviceCookieFile := flag.String("service-cookie-file", "", "optional cookies JSON file sent through the service call")
 	serviceCookiePlatform := flag.String("service-cookie-platform", "telemost", "platform for service cookie submit")
 	serviceWorkPlatform := flag.String("service-work-platform", "telemost", "platform requested for the work call")
@@ -54,6 +55,7 @@ func main() {
 	serviceCfg := serviceControlConfig{
 		Enabled:        *serviceControl,
 		UserID:         *serviceUserID,
+		Credential:     *serviceCredential,
 		RequestID:      *serviceRequestID,
 		EgressID:       *egressID,
 		CookieFile:     *serviceCookieFile,

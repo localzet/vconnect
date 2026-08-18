@@ -107,6 +107,7 @@ func main() {
 	egressID := flag.String("egress-id", "", "creator egress profile id")
 	serviceControl := flag.Bool("service-control", false, "use this call as a control channel and request a work call")
 	serviceUserID := flag.String("service-user-id", "", "user id sent in service control messages")
+	serviceCredential := flag.String("service-credential", "", "credential for authenticated service control")
 	serviceCookieFile := flag.String("service-cookie-file", "", "optional cookies JSON file to send through the service call")
 	serviceCookiePlatform := flag.String("service-cookie-platform", "telemost", "platform for service cookie submit")
 	serviceWorkPlatform := flag.String("service-work-platform", "telemost", "platform requested for the work call")
@@ -119,6 +120,10 @@ func main() {
 	noTun := flag.Bool("no-tun", false, "expose SOCKS5 only, do not bring up the wintun adapter")
 	dualTrack := flag.Bool("dual-track", false, "VK/WB Stream: dual-track tunnel (second screenshare channel) for higher throughput")
 	flag.Parse()
+
+	if strings.TrimSpace(*serviceCredential) == "" {
+		*serviceCredential = strings.TrimSpace(os.Getenv("VCONNECT_SERVICE_CREDENTIAL"))
+	}
 
 	if *platform == "" || *link == "" {
 		log.Fatal("--platform and --link are required")
@@ -304,6 +309,7 @@ func main() {
 			bridge.MarkReady()
 			serviceRuntime.startRequestLoop(bridge, serviceControlConfig{
 				UserID:         *serviceUserID,
+				Credential:     *serviceCredential,
 				RequestID:      *serviceRequestID,
 				EgressID:       *egressID,
 				CookieFile:     *serviceCookieFile,
@@ -564,6 +570,7 @@ func runDion(link, name string,
 
 type serviceControlConfig struct {
 	UserID         string
+	Credential     string
 	RequestID      string
 	EgressID       string
 	CookieFile     string
@@ -633,32 +640,35 @@ func requestServiceSession(bridge *tunnel.RelayBridge, cfg serviceControlConfig)
 			log.Printf("[service] read cookies: %v", err)
 		} else {
 			bridge.SubmitCookies(tunnel.CookieSubmit{
-				RequestID: cfg.RequestID + "-cookies",
-				UserID:    cfg.UserID,
-				Platform:  cfg.CookiePlatform,
-				Format:    "json",
-				Payload:   string(payload),
+				RequestID:  cfg.RequestID + "-cookies",
+				UserID:     cfg.UserID,
+				Credential: cfg.Credential,
+				Platform:   cfg.CookiePlatform,
+				Format:     "json",
+				Payload:    string(payload),
 			})
 			log.Printf("[service] submitted cookies platform=%q request=%q", cfg.CookiePlatform, cfg.RequestID+"-cookies")
 		}
 	}
 	bridge.RequestSession(tunnel.SessionCreateRequest{
-		RequestID: cfg.RequestID,
-		UserID:    cfg.UserID,
-		EgressID:  cfg.EgressID,
-		Platform:  cfg.WorkPlatform,
-		Mode:      cfg.TunnelMode,
+		RequestID:  cfg.RequestID,
+		UserID:     cfg.UserID,
+		Credential: cfg.Credential,
+		EgressID:   cfg.EgressID,
+		Platform:   cfg.WorkPlatform,
+		Mode:       cfg.TunnelMode,
 	})
 	log.Printf("[service] requested work session platform=%q egress=%q request=%q", cfg.WorkPlatform, cfg.EgressID, cfg.RequestID)
 }
 
 func requestServiceSessionWithoutCookies(bridge *tunnel.RelayBridge, cfg serviceControlConfig) {
 	bridge.RequestSession(tunnel.SessionCreateRequest{
-		RequestID: cfg.RequestID,
-		UserID:    cfg.UserID,
-		EgressID:  cfg.EgressID,
-		Platform:  cfg.WorkPlatform,
-		Mode:      cfg.TunnelMode,
+		RequestID:  cfg.RequestID,
+		UserID:     cfg.UserID,
+		Credential: cfg.Credential,
+		EgressID:   cfg.EgressID,
+		Platform:   cfg.WorkPlatform,
+		Mode:       cfg.TunnelMode,
 	})
 	log.Printf("[service] retried work session request platform=%q egress=%q request=%q", cfg.WorkPlatform, cfg.EgressID, cfg.RequestID)
 }

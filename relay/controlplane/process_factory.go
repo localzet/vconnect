@@ -42,17 +42,24 @@ type ProcessFactoryConfig struct {
 	SessionsDir     string
 	Resources       string
 	EgressConfig    string
+	UserEgresses    UserEgressFactory
 	Cookies         CookieResolver
 	ServiceCookies  CookieResolver
 	CookieSource    string
 	SpawnTimeout    time.Duration
 	DefaultPlatform string
+	VKPeerID        string
+}
+
+type managedWorkProcess struct {
+	cmd   *exec.Cmd
+	lease UserEgressLease
 }
 
 type ProcessWorkCallFactory struct {
 	cfg       ProcessFactoryConfig
 	mu        sync.Mutex
-	processes map[string]*exec.Cmd
+	processes map[string]*managedWorkProcess
 }
 
 func NewProcessWorkCallFactory(cfg ProcessFactoryConfig) (*ProcessWorkCallFactory, error) {
@@ -78,7 +85,7 @@ func NewProcessWorkCallFactory(cfg ProcessFactoryConfig) (*ProcessWorkCallFactor
 	}
 	return &ProcessWorkCallFactory{
 		cfg:       cfg,
-		processes: make(map[string]*exec.Cmd),
+		processes: make(map[string]*managedWorkProcess),
 	}, nil
 }
 
@@ -106,32 +113,59 @@ func (f *ProcessWorkCallFactory) CreateWorkCall(ctx context.Context, request Wor
 	linkFile.Close()
 	os.Remove(linkPath)
 
+	egressConfigPath := f.cfg.EgressConfig
+	var egressLease UserEgressLease
+	if f.cfg.UserEgresses != nil {
+		egressLease, err = f.cfg.UserEgresses.Acquire(ctx, request.UserID, request.RequestID)
+		if err != nil {
+			return WorkCall{}, err
+		}
+		egressConfigPath = egressLease.EgressConfigPath()
+	}
+	cleanupLease := func() {
+		if egressLease != nil {
+			_ = egressLease.Close()
+		}
+	}
+
 	args := []string{"--write-file", linkPath, "--resources", f.cfg.Resources}
+	if platform == PlatformVK {
+		peerID := strings.TrimSpace(f.cfg.VKPeerID)
+		if peerID == "" {
+			cleanupLease()
+			return WorkCall{}, errors.New("controlplane: VK work call requires configured peer id")
+		}
+		args = append(args, "--peer-id", peerID)
+	}
 	if platformNeedsCookies(platform) {
 		resolver := f.cookieResolver()
 		if resolver == nil {
+			cleanupLease()
 			return WorkCall{}, fmt.Errorf("controlplane: cookie resolver is required for platform %q", platform)
 		}
 		cookies, err := resolver.CookiePath(request.UserID, platform)
 		if err != nil {
+			cleanupLease()
 			return WorkCall{}, err
 		}
 		args = append(args, "--cookies", cookies)
 	}
-	if f.cfg.EgressConfig != "" {
-		args = append(args, "--egress-config", f.cfg.EgressConfig)
+	if egressConfigPath != "" {
+		args = append(args, "--egress-config", egressConfigPath)
 	}
 
 	cmd := exec.CommandContext(ctx, bin, args...)
 	logPath := filepath.Join(f.cfg.SessionsDir, fmt.Sprintf("work-%s-%s.log", platform, request.RequestID))
 	logFile, err := os.Create(logPath)
 	if err != nil {
+		cleanupLease()
 		return WorkCall{}, err
 	}
 	defer logFile.Close()
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	if err := cmd.Start(); err != nil {
+		cleanupLease()
 		return WorkCall{}, err
 	}
 	waitCh := make(chan error, 1)
@@ -144,27 +178,32 @@ func (f *ProcessWorkCallFactory) CreateWorkCall(ctx context.Context, request Wor
 			_ = cmd.Process.Kill()
 			<-waitCh
 		}
+		cleanupLease()
 		return WorkCall{}, fmt.Errorf("%w (log: %s)", err, logPath)
 	}
 	if cmd.ProcessState != nil {
+		cleanupLease()
 		return WorkCall{}, fmt.Errorf("controlplane: creator exited after writing link (log: %s)", logPath)
 	}
 	select {
 	case err := <-waitCh:
 		if err != nil {
+			cleanupLease()
 			return WorkCall{}, fmt.Errorf("controlplane: creator exited after writing link: %w (log: %s)", err, logPath)
 		}
+		cleanupLease()
 		return WorkCall{}, fmt.Errorf("controlplane: creator exited after writing link (log: %s)", logPath)
 	default:
 	}
 	f.mu.Lock()
-	f.processes[link] = cmd
+	f.processes[link] = &managedWorkProcess{cmd: cmd, lease: egressLease}
 	f.mu.Unlock()
 	go func() {
-		if err := <-waitCh; err != nil {
-			// The process may be killed during normal session cleanup.
-			return
-		}
+		_ = <-waitCh
+		// Если work creator завершился сам, больше держать персональный
+		// Xray bridge нет смысла. Close идемпотентен, поэтому normal cleanup
+		// может вызвать его повторно.
+		cleanupLease()
 	}()
 	return WorkCall{JoinLink: link}, nil
 }
@@ -178,13 +217,24 @@ func (f *ProcessWorkCallFactory) cookieResolver() CookieResolver {
 
 func (f *ProcessWorkCallFactory) CloseWorkCall(_ context.Context, session Session) error {
 	f.mu.Lock()
-	cmd := f.processes[session.JoinLink]
+	managed := f.processes[session.JoinLink]
 	delete(f.processes, session.JoinLink)
 	f.mu.Unlock()
-	if cmd == nil || cmd.Process == nil {
+	if managed == nil {
 		return nil
 	}
-	return cmd.Process.Kill()
+	var firstErr error
+	if managed.cmd != nil && managed.cmd.Process != nil && managed.cmd.ProcessState == nil {
+		if err := managed.cmd.Process.Kill(); err != nil {
+			firstErr = err
+		}
+	}
+	if managed.lease != nil {
+		if err := managed.lease.Close(); firstErr == nil && err != nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 func normalizeCookieSource(source string) string {

@@ -43,8 +43,12 @@ type Config struct {
 }
 
 type Descriptor struct {
-	ID        string `json:"id"`
-	IsDefault bool   `json:"isDefault"`
+	ID          string `json:"id"`
+	IsDefault   bool   `json:"isDefault"`
+	DisplayName string `json:"displayName,omitempty"`
+	Region      string `json:"region,omitempty"`
+	Mode        string `json:"mode,omitempty"`
+	Auto        bool   `json:"auto,omitempty"`
 }
 
 type Profile struct {
@@ -56,16 +60,21 @@ type Profile struct {
 	PasswordEnv  string `json:"passwordEnv,omitempty"`
 	PasswordFile string `json:"passwordFile,omitempty"`
 	Enabled      bool   `json:"enabled"`
+	DisplayName  string `json:"displayName,omitempty"`
+	Region       string `json:"region,omitempty"`
+	Mode         string `json:"mode,omitempty"`
+	Auto         bool   `json:"auto,omitempty"`
 }
 
 type Registry struct {
 	defaultID    string
 	probeAddress string
 	dialers      map[string]Dialer
+	metadata     map[string]Descriptor
 }
 
 func NewRegistry(defaultID string, dialers ...Dialer) (*Registry, error) {
-	out := &Registry{defaultID: strings.TrimSpace(defaultID), probeAddress: DefaultProbeAddress, dialers: make(map[string]Dialer)}
+	out := &Registry{defaultID: strings.TrimSpace(defaultID), probeAddress: DefaultProbeAddress, dialers: make(map[string]Dialer), metadata: make(map[string]Descriptor)}
 	for _, dialer := range dialers {
 		if dialer == nil {
 			continue
@@ -90,6 +99,7 @@ func NewRegistry(defaultID string, dialers ...Dialer) (*Registry, error) {
 
 func DirectRegistry() *Registry {
 	reg, _ := NewRegistry(TypeDirect, DirectDialer{ProfileID: TypeDirect})
+	reg.metadata[TypeDirect] = Descriptor{ID: TypeDirect, IsDefault: true, DisplayName: "Direct"}
 	return reg
 }
 
@@ -137,6 +147,19 @@ func RegistryFromConfig(cfg Config) (*Registry, error) {
 	if err != nil {
 		return nil, err
 	}
+	for _, profile := range cfg.Egresses {
+		if !profile.Enabled {
+			continue
+		}
+		registry.metadata[profile.ID] = Descriptor{
+			ID:          profile.ID,
+			IsDefault:   profile.ID == registry.defaultID,
+			DisplayName: strings.TrimSpace(profile.DisplayName),
+			Region:      strings.TrimSpace(profile.Region),
+			Mode:        strings.TrimSpace(profile.Mode),
+			Auto:        profile.Auto,
+		}
+	}
 	if probeAddress := strings.TrimSpace(cfg.ProbeAddress); probeAddress != "" {
 		if _, _, err := net.SplitHostPort(probeAddress); err != nil {
 			return nil, fmt.Errorf("egress: probeAddress: %w", err)
@@ -157,7 +180,13 @@ func (r *Registry) Descriptors() []Descriptor {
 	sort.Strings(ids)
 	out := make([]Descriptor, 0, len(ids))
 	for _, id := range ids {
-		out = append(out, Descriptor{ID: id, IsDefault: id == r.defaultID})
+		descriptor, ok := r.metadata[id]
+		if !ok {
+			descriptor = Descriptor{ID: id}
+		}
+		descriptor.ID = id
+		descriptor.IsDefault = id == r.defaultID
+		out = append(out, descriptor)
 	}
 	return out
 }
@@ -263,4 +292,23 @@ func validateID(id string) error {
 		return fmt.Errorf("egress: invalid id %q", id)
 	}
 	return nil
+}
+
+// WithDescriptors переносит пользовательские метаданные в уже созданный
+// registry. Это нужно control plane, где Dialer служит только для health probe.
+func WithDescriptors(registry *Registry, profiles []Profile) *Registry {
+	if registry == nil {
+		return registry
+	}
+	for _, profile := range profiles {
+		registry.metadata[profile.ID] = Descriptor{
+			ID:          profile.ID,
+			IsDefault:   profile.ID == registry.defaultID,
+			DisplayName: strings.TrimSpace(profile.DisplayName),
+			Region:      strings.TrimSpace(profile.Region),
+			Mode:        strings.TrimSpace(profile.Mode),
+			Auto:        profile.Auto,
+		}
+	}
+	return registry
 }

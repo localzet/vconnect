@@ -101,7 +101,8 @@ type RelayBridge struct {
 	onControlErrorMu sync.Mutex
 	onControlError   func(ControlError)
 
-	egressDiscoveryUserID string
+	egressDiscoveryUserID     string
+	egressDiscoveryCredential string
 }
 
 func (rb *RelayBridge) SetOnPeerConfig(fn func(fps, batch, trackCount int)) {
@@ -134,10 +135,15 @@ func (rb *RelayBridge) SetOnEgressListRequest(fn func(EgressListRequest) ([]Egre
 	rb.onEgressListRequestMu.Unlock()
 }
 
-func (rb *RelayBridge) SetEgressDiscoveryUserID(userID string) {
+func (rb *RelayBridge) SetEgressDiscoveryIdentity(userID, credential string) {
 	rb.egressMu.Lock()
 	rb.egressDiscoveryUserID = strings.TrimSpace(userID)
+	rb.egressDiscoveryCredential = strings.TrimSpace(credential)
 	rb.egressMu.Unlock()
+}
+
+func (rb *RelayBridge) SetEgressDiscoveryUserID(userID string) {
+	rb.SetEgressDiscoveryIdentity(userID, "")
 }
 
 func (rb *RelayBridge) RequestSession(request SessionCreateRequest) {
@@ -359,7 +365,8 @@ func (rb *RelayBridge) startClientHelloRetry() {
 }
 
 func (rb *RelayBridge) sendEgressListRequest() {
-	rb.send(ControlConnID, MsgEgressListRequest, EncodeEgressListRequestPayload(rb.egressDiscoveryUser()))
+	userID, credential := rb.egressDiscoveryIdentity()
+	rb.send(ControlConnID, MsgEgressListRequest, EncodeEgressListRequestPayloadWithCredential(userID, credential))
 }
 
 func (rb *RelayBridge) startEgressListRetry() {
@@ -392,10 +399,10 @@ func (rb *RelayBridge) requestedEgress() string {
 	return rb.requestedEgressID
 }
 
-func (rb *RelayBridge) egressDiscoveryUser() string {
+func (rb *RelayBridge) egressDiscoveryIdentity() (string, string) {
 	rb.egressMu.RLock()
 	defer rb.egressMu.RUnlock()
-	return rb.egressDiscoveryUserID
+	return rb.egressDiscoveryUserID, rb.egressDiscoveryCredential
 }
 
 func (rb *RelayBridge) currentEgressRegistry() *egress.Registry {
@@ -576,7 +583,14 @@ func (rb *RelayBridge) handleTunnelData(data []byte) {
 					descriptors := rb.currentEgressRegistry().Descriptors()
 					items = make([]EgressDescriptor, 0, len(descriptors))
 					for _, descriptor := range descriptors {
-						items = append(items, EgressDescriptor{ID: descriptor.ID, IsDefault: descriptor.IsDefault})
+						items = append(items, EgressDescriptor{
+							ID:          descriptor.ID,
+							IsDefault:   descriptor.IsDefault,
+							DisplayName: descriptor.DisplayName,
+							Region:      descriptor.Region,
+							Mode:        descriptor.Mode,
+							Auto:        descriptor.Auto,
+						})
 					}
 				}
 				rb.send(ControlConnID, MsgEgressList, EncodeEgressListPayload(items))

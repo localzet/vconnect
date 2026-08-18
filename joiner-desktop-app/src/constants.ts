@@ -14,6 +14,10 @@ export const IPC = {
 export interface EgressDescriptor {
   id: string;
   isDefault: boolean;
+  displayName?: string;
+  region?: string;
+  mode?: string;
+  auto?: boolean;
 }
 
 export interface EgressProbeResult {
@@ -42,6 +46,9 @@ export interface JoinerSettings {
   dualTrack: boolean;
   serviceControl: boolean;
   serviceWorkPlatform: JoinerPlatform;
+  fabricControllerUrl: string;
+  fabricUserId: string;
+  fabricCredential: string;
 }
 
 export interface ServiceAuthStatus {

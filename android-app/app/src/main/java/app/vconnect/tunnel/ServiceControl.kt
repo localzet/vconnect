@@ -4,6 +4,7 @@ import org.json.JSONObject
 
 data class ServiceControlConfig(
     val userId: String,
+    val credential: String,
     val cookieFile: String?,
     val cookiePlatform: CallPlatform,
     val workPlatform: CallPlatform,
@@ -20,6 +21,7 @@ data class ServiceControlConfig(
     fun toProcessArgs(): List<String> = buildList {
         add("--service-control")
         addAll(listOf("--service-user-id", userId))
+        credential.takeIf { it.isNotBlank() }?.let { addAll(listOf("--service-credential", it)) }
         addAll(listOf("--service-cookie-platform", cookiePlatform.id))
         addAll(listOf("--service-work-platform", workPlatform.id))
         addAll(listOf("--service-request-id", requestId))

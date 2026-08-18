@@ -27,6 +27,7 @@ import androidx.viewpager2.widget.ViewPager2
 import app.vconnect.tunnel.CallConfig
 import app.vconnect.tunnel.CallPlatform
 import app.vconnect.tunnel.EgressProfileStatus
+import app.vconnect.tunnel.FabricBootstrapClient
 import app.vconnect.tunnel.HeadlessJoinController
 import app.vconnect.tunnel.JoinController
 import app.vconnect.tunnel.ServiceJoinController
@@ -686,6 +687,11 @@ class MainActivity :
         val url = config.url.trim()
         if (url.isEmpty()) return
 
+        if (url.startsWith("fabric://", ignoreCase = true)) {
+            startFabricBootstrap(config)
+            return
+        }
+
         val platform = config.platform
         val tunnelMode = config.effectiveTunnelMode(Prefs.tunnelMode)
         if ((config.tunnelMode ?: Prefs.tunnelMode) == TunnelMode.DC &&
@@ -743,6 +749,54 @@ class MainActivity :
             .commit()
     }
 
+    private fun startFabricBootstrap(config: CallConfig) {
+        if (Prefs.fabricControllerUrl.isBlank()) {
+            appendLog("Fabric Controller is not configured")
+            mainFragment()?.onStatusTextChanged("Fabric Controller is not configured")
+            Toast.makeText(this, "Configure Fabric Controller in Settings", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (Prefs.serviceCredential.isBlank()) {
+            appendLog("Fabric access credential is not configured")
+            mainFragment()?.onStatusTextChanged("Fabric access is not configured")
+            Toast.makeText(this, "Configure Fabric access in Settings", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        appendLog("Fabric AUTO: discovering RU edge")
+        lastStatus = VpnStatus.CONNECTING
+        mainFragment()?.onStatusChanged(VpnStatus.CONNECTING)
+        mainFragment()?.onStatusTextChanged("Selecting RU edge...")
+        thread(name = "fabric-bootstrap") {
+            runCatching {
+                FabricBootstrapClient.resolve(
+                    controllerBaseUrl = Prefs.fabricControllerUrl,
+                    userId = Prefs.serviceUserId,
+                    credential = Prefs.serviceCredential,
+                    controlPlatform = CallPlatform.TELEMOST,
+                )
+            }.onSuccess { edge ->
+                runOnUiThread {
+                    appendLog("Fabric AUTO: ${edge.edgeId} -> ${maskUrl(edge.callLink)}")
+                    val resolved = config.copy(
+                        url = edge.callLink,
+                        serviceControl = true,
+                        workPlatform = config.workPlatform ?: CallPlatform.TELEMOST,
+                    )
+                    startJoinFor(resolved)
+                }
+            }.onFailure { error ->
+                runOnUiThread {
+                    appendLog("Fabric AUTO failed: ${error.message}")
+                    lastStatus = VpnStatus.CALL_FAILED
+                    mainFragment()?.onStatusChanged(VpnStatus.CALL_FAILED)
+                    mainFragment()?.onStatusTextChanged(error.message ?: "No RU edge available")
+                    Toast.makeText(this, error.message ?: "Fabric bootstrap failed", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
     private fun startServiceEgressDiscovery(config: CallConfig) {
         setJoinOverlayVisible(false)
         appendLog("Loading service server list")
@@ -770,7 +824,8 @@ class MainActivity :
                 .thenBy { it.latencyMs ?: Long.MAX_VALUE }
                 .thenBy { it.id }
         ).map { item ->
-            val title = if (item.isDefault) "${item.id} (default)" else item.id
+            val label = item.displayName ?: item.id
+            val title = if (item.isDefault) "$label (default)" else label
             val sub = when {
                 item.available == true -> "${item.latencyMs ?: 0} ms"
                 item.available == false -> item.error ?: "Offline"

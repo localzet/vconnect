@@ -78,6 +78,8 @@ object PrefsKeys {
     const val DISCOVERED_EGRESS_LIST = "discovered_egress_list"
     const val DISCOVERED_EGRESS_PROBES = "discovered_egress_probes"
     const val SERVICE_USER_ID = "service_user_id"
+    const val SERVICE_CREDENTIAL = "service_credential"
+    const val FABRIC_CONTROLLER_URL = "fabric_controller_url"
 }
 
 object VP8Defaults {

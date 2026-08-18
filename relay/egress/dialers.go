@@ -1,6 +1,7 @@
 package egress
 
 import (
+	"fmt"
 	"net"
 	"time"
 
@@ -71,4 +72,24 @@ func (s *directUDPSession) SetReadDeadline(t time.Time) error {
 
 func (s *directUDPSession) Close() error {
 	return s.conn.Close()
+}
+
+// ReachabilityDialer используется control plane только для проверки того,
+// что локальная точка Fabric/Xray вообще слушает порт. Пользовательский трафик
+// через него не отправляется: реальный egress создаётся персональным bridge.
+type ReachabilityDialer struct {
+	ProfileID string
+	Target    string
+}
+
+func (d ReachabilityDialer) ID() string {
+	return d.ProfileID
+}
+
+func (d ReachabilityDialer) DialTCP(_ string, timeout time.Duration) (net.Conn, error) {
+	return net.DialTimeout("tcp", d.Target, timeout)
+}
+
+func (d ReachabilityDialer) UDPAssociate(_ string, _ time.Duration) (UDPSession, error) {
+	return nil, fmt.Errorf("egress: reachability dialer does not support UDP")
 }

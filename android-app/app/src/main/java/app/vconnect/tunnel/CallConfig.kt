@@ -95,6 +95,7 @@ data class CallConfig(
         }
 
         fun suggestNameFor(url: String): String {
+            if (url.trim().startsWith("fabric://", ignoreCase = true)) return "Zorin Fabric · AUTO"
             val platform = CallPlatform.fromUrl(url)
             val label = platformLabelFor(platform).let { if (platform == CallPlatform.VK) "$it call" else it }
             return label

@@ -90,7 +90,7 @@
     <string name="sheet_field_egress">Egress ID</string>
     <string name="sheet_field_name_hint">e.g. Standup VK</string>
     <string name="sheet_field_link_hint">https://&#8230;</string>
-    <string name="sheet_field_egress_hint">default / de-fra-1 / nl-ams-1</string>
+    <string name="sheet_field_egress_hint">auto / fi-direct / nl-warp</string>
     <string name="sheet_service_control">Use as service call</string>
     <string name="sheet_work_platform">Work call platform</string>
     <string name="sheet_service_tm_only">Service calls currently require a Telemost link</string>
@@ -104,6 +104,16 @@
     <string name="settings_row_accent">Accent color</string>
     <string name="service_client_id">Service client ID</string>
     <string name="service_client_id_copied">Client ID copied</string>
+    <string name="fabric_access_title">Fabric access</string>
+    <string name="fabric_access_subtitle">Paste the Remnawave short UUID and VConnect Fabric credential issued by the server.</string>
+    <string name="fabric_access_field">shortUuid:credential</string>
+    <string name="fabric_access_not_configured">Not configured</string>
+    <string name="fabric_access_configured">Remnawave identity configured</string>
+    <string name="fabric_access_invalid">Invalid Fabric access string</string>
+    <string name="fabric_controller_title">Fabric Controller</string>
+    <string name="fabric_controller_subtitle">Controller used by fabric://auto to discover a live RU edge and its current VConnect service call.</string>
+    <string name="fabric_controller_field">Controller URL</string>
+    <string name="fabric_controller_not_configured">Not configured</string>
     <string name="sheet_save">Save call</string>
     <string name="sheet_save_short">Save</string>
     <string name="sheet_cancel">Cancel</string>

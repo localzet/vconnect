@@ -6,6 +6,10 @@ import org.json.JSONObject
 data class EgressProfileStatus(
     val id: String,
     val isDefault: Boolean,
+    val displayName: String?,
+    val region: String?,
+    val mode: String?,
+    val auto: Boolean,
     val available: Boolean?,
     val latencyMs: Long?,
     val error: String?,
@@ -55,6 +59,10 @@ object EgressDiscovery {
             EgressProfileStatus(
                 id = id,
                 isDefault = item.optBoolean("isDefault"),
+                displayName = item.optString("displayName").takeIf { it.isNotBlank() },
+                region = item.optString("region").takeIf { it.isNotBlank() },
+                mode = item.optString("mode").takeIf { it.isNotBlank() },
+                auto = item.optBoolean("auto"),
                 available = probe?.optBoolean("available"),
                 latencyMs = probe?.takeIf { it.has("latencyMs") }?.optLong("latencyMs"),
                 error = probe?.optString("error")?.takeIf { it.isNotBlank() },
@@ -69,9 +77,9 @@ object EgressDiscovery {
         if (items.isEmpty()) return "Available profiles will appear after connection"
         return items.joinToString(" | ") { item ->
             when {
-                item.available == null -> "${item.id}: ..."
-                item.available -> "${item.id}: ${item.latencyMs ?: 0} ms"
-                else -> "${item.id}: offline"
+                item.available == null -> "${item.displayName ?: item.id}: ..."
+                item.available -> "${item.displayName ?: item.id}: ${item.latencyMs ?: 0} ms"
+                else -> "${item.displayName ?: item.id}: offline"
             }
         }
     }

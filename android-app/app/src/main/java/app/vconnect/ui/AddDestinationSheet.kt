@@ -79,11 +79,6 @@ class AddDestinationSheet : BottomSheetDialogFragment() {
             }
             val name = inputName.text.toString().trim().ifEmpty { CallConfig.suggestNameFor(link) }
             val egressId = inputEgressId.text.toString().trim().ifEmpty { null }
-            if (serviceControl.isChecked && CallPlatform.fromUrl(link) != CallPlatform.TELEMOST) {
-                inputLink.error = getString(R.string.sheet_service_tm_only)
-                inputLink.requestFocus()
-                return@setOnClickListener
-            }
             val workPlatform = inputWorkPlatform.text.toString().let { value ->
                 workPlatforms.firstOrNull { it.name == value }
             }
@@ -91,10 +86,12 @@ class AddDestinationSheet : BottomSheetDialogFragment() {
                 inputWorkPlatform.requestFocus()
                 return@setOnClickListener
             }
+            val fabricAuto = link.startsWith("fabric://", ignoreCase = true)
+            val useServiceControl = serviceControl.isChecked || fabricAuto
             val config = CallConfig.newWith(name = name, url = link).copy(
                 egressId = egressId,
-                serviceControl = serviceControl.isChecked,
-                workPlatform = workPlatform.takeIf { serviceControl.isChecked },
+                serviceControl = useServiceControl,
+                workPlatform = (workPlatform ?: CallPlatform.TELEMOST).takeIf { useServiceControl },
             )
             Prefs.addDestination(config)
             (parentFragment as? CallsListener)?.onDestinationsChanged()

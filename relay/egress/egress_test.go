@@ -12,7 +12,7 @@ func TestRegistryFromConfigSelectsDefaultAndRequested(t *testing.T) {
 		DefaultEgress: "direct",
 		Egresses: []Profile{
 			{ID: "direct", Type: TypeDirect, Enabled: true},
-			{ID: "de-fra-1", Type: TypeSOCKS5, Address: "127.0.0.1:1080", Username: "user", PasswordEnv: "WB_EGRESS_TEST_PASSWORD", Enabled: true},
+			{ID: "de-fra-1", Type: TypeSOCKS5, Address: "127.0.0.1:1080", Username: "user", PasswordEnv: "WB_EGRESS_TEST_PASSWORD", Enabled: true, DisplayName: "DE · direct", Region: "DE", Mode: "direct"},
 			{ID: "disabled", Type: TypeDirect, Enabled: false},
 		},
 	})
@@ -27,6 +27,17 @@ func TestRegistryFromConfigSelectsDefaultAndRequested(t *testing.T) {
 	}
 	if _, _, err := reg.Select("disabled"); err == nil {
 		t.Fatal("Select(disabled) expected error")
+	}
+	descriptors := reg.Descriptors()
+	var found Descriptor
+	for _, descriptor := range descriptors {
+		if descriptor.ID == "de-fra-1" {
+			found = descriptor
+			break
+		}
+	}
+	if found.DisplayName != "DE · direct" || found.Region != "DE" || found.Mode != "direct" {
+		t.Fatalf("route metadata was not preserved: %+v", found)
 	}
 }
 

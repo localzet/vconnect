@@ -18,6 +18,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/pion/webrtc/v4"
 	"vconnect/relay/common"
+	"vconnect/relay/controlplane"
 	"vconnect/relay/egress"
 	"vconnect/relay/tunnel"
 )
@@ -637,8 +638,62 @@ func main() {
 	upstreamUser := flag.String("upstream-user", "", "upstream SOCKS5 username")
 	upstreamPass := flag.String("upstream-pass", "", "upstream SOCKS5 password")
 	egressConfig := flag.String("egress-config", "", "JSON egress profile config")
+	fabricRoutes := flag.String("fabric-routes", "", "Fabric route inventory generated from the RU Remnawave profile")
+	xrayBinary := flag.String("xray-bin", "xray", "Xray binary used for per-user Fabric bridge processes")
+	serviceMode := flag.Bool("service-control", false, "run this VK call as a creator service control plane")
+	serviceUserIDs := flag.String("service-user-ids", "", "comma-separated service user allowlist")
+	serviceAuthMode := flag.String("service-auth-mode", "allowlist", "service auth mode: allowlist or remnawave")
+	remnawaveURL := flag.String("remnawave-url", "", "Remnawave panel base URL used in remnawave auth mode")
+	remnawaveAPIToken := flag.String("remnawave-api-token", "", "Remnawave API bearer token")
+	remnawaveLookup := flag.String("remnawave-lookup", controlplane.RemnawaveLookupShortUUID, "Remnawave user lookup: short-uuid, username, id")
+	fabricAuthKey := flag.String("fabric-auth-key-base64", "", "base64 master key used to verify per-user Fabric credentials")
+	authCacheTTL := flag.Duration("auth-cache-ttl", 30*time.Second, "Remnawave authorization cache TTL")
+	authStaleGrace := flag.Duration("auth-stale-grace", 5*time.Minute, "maximum stale ACTIVE cache age if Remnawave is temporarily unavailable")
+	vaultDir := flag.String("vault-dir", "", "directory for encrypted user cookie vault")
+	vaultKey := flag.String("vault-key-base64", "", "base64 encoded 32-byte cookie vault key")
+	binsDir := flag.String("bins-dir", "", "directory containing headless creator binaries")
+	sessionsDir := flag.String("sessions-dir", "", "directory for spawned work creator state and logs")
+	workPlatform := flag.String("work-platform", "vk", "default work call platform")
+	workVKPeerID := flag.String("work-vk-peer-id", "", "VK peer_id used when a work session requests VK transport")
+	workCookieSource := flag.String("work-cookie-source", "user", "work call cookies source: user or service")
+	maxActiveUsers := flag.Int("max-active-users", 2, "maximum users with active work calls")
+	workTTL := flag.Duration("work-ttl", 30*time.Minute, "work call lifetime")
+	serviceStatsFile := flag.String("service-stats-file", "", "optional file containing current active Fabric user count")
 	flag.Parse()
 	egressRegistry := loadEgressRegistry(*egressConfig, *upstreamSocks, *upstreamUser, *upstreamPass)
+
+	var bindBridge func(*tunnel.RelayBridge) error
+	if *serviceMode {
+		var err error
+		bindBridge, err = configureServiceControl(serviceControlOptions{
+			UserIDs:           *serviceUserIDs,
+			AuthMode:          *serviceAuthMode,
+			RemnawaveURL:      *remnawaveURL,
+			RemnawaveAPIToken: *remnawaveAPIToken,
+			RemnawaveLookup:   *remnawaveLookup,
+			FabricAuthKey:     *fabricAuthKey,
+			AuthCacheTTL:      *authCacheTTL,
+			AuthStaleGrace:    *authStaleGrace,
+			VaultDir:          *vaultDir,
+			VaultKey:          *vaultKey,
+			BinsDir:           *binsDir,
+			SessionsDir:       *sessionsDir,
+			EgressConfig:      *egressConfig,
+			FabricRoutes:      *fabricRoutes,
+			XrayBinary:        *xrayBinary,
+			Resources:         *resources,
+			WorkPlatform:      *workPlatform,
+			WorkVKPeerID:      *workVKPeerID,
+			WorkCookieSource:  *workCookieSource,
+			ServiceCookies:    *cookiesPath,
+			MaxActiveUsers:    *maxActiveUsers,
+			WorkTTL:           *workTTL,
+			StatsFile:         *serviceStatsFile,
+		})
+		if err != nil {
+			log.Fatalf("[service] configure: %v", err)
+		}
+	}
 
 	var readBuf int
 	var maxDCBuf uint64
@@ -737,6 +792,11 @@ func main() {
 		ur.OnConnected = func(tun tunnel.DataTunnel) {
 			rb := tunnel.NewRelayBridge(tun, "creator", common.VP8BufSize, log.Printf)
 			rb.SetEgressRegistry(egressRegistry)
+			if bindBridge != nil {
+				if err := bindBridge(rb); err != nil {
+					log.Printf("[service] bind bridge failed: %v", err)
+				}
+			}
 			if st, ok := tun.(*tunnel.SymmetricScreenTunnel); ok {
 				rb.SetOnPeerConfig(func(fps, batch, trackCount int) {
 					st.SetTrackCount(trackCount)

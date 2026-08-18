@@ -198,6 +198,12 @@ func (m *Manager) Count() int {
 	return len(m.sessions)
 }
 
+func (m *Manager) ActiveUserCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.activeUserCountLocked()
+}
+
 func (m *Manager) cleanupExpiredLocked(now time.Time) []Session {
 	var removed []Session
 	for id, session := range m.sessions {

@@ -99,6 +99,25 @@
         <div class="service-settings" id="serviceSettings">
           <div class="service-auth-row">
             <div>
+              <strong>Zorin Fabric</strong>
+              <span class="hint">Use <code>fabric://auto</code> as Join link for automatic RU edge selection.</span>
+            </div>
+          </div>
+          <label>
+            Fabric Controller
+            <input id="fabricControllerUrl" type="url" placeholder="https://fabric.example.com" autocomplete="off" />
+          </label>
+          <label>
+            Remnawave short UUID
+            <input id="fabricUserId" type="text" placeholder="shortUuid" autocomplete="username" />
+          </label>
+          <label>
+            Fabric credential
+            <input id="fabricCredential" type="password" placeholder="ft1... (not persisted)" autocomplete="off" />
+            <span class="hint">Prefer a short-lived ft1 token. The GUI does not persist this field.</span>
+          </label>
+          <div class="service-auth-row">
+            <div>
               <strong>Yandex session</strong>
               <span class="hint" id="serviceAuthStatus">Checking...</span>
             </div>

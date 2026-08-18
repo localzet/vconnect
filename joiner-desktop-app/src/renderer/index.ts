@@ -3,6 +3,7 @@ type JoinerPlatform = 'wbstream' | 'telemost' | 'vk' | 'dion';
 function detectPlatform(url: string): JoinerPlatform | null {
   const u = url.toLowerCase();
   if (!u) return null;
+  if (u.startsWith('fabric://')) return 'telemost';
   if (u.includes('wbstream://') || u.includes('stream.wb.ru')) return 'wbstream';
   if (u.includes('telemost.yandex')) return 'telemost';
   if (u.includes('dion://') || u.includes('dion.vc')) return 'dion';
@@ -32,7 +33,7 @@ interface Bridge {
   onEgressProbe(cb: (result: EgressProbeResult) => void): void;
 }
 
-interface EgressDescriptor { id: string; isDefault: boolean }
+interface EgressDescriptor { id: string; isDefault: boolean; displayName?: string; region?: string; mode?: string; auto?: boolean }
 interface EgressProbeResult { id: string; available: boolean; latencyMs: number; error?: string }
 declare const bridge: Bridge;
 
@@ -84,6 +85,8 @@ if (savedSettingsRaw) {
     input('dualTrack').checked = Boolean(saved.dualTrack);
     input('serviceControl').checked = Boolean(saved.serviceControl);
     select('serviceWorkPlatform').value = saved.serviceWorkPlatform ?? 'telemost';
+    input('fabricControllerUrl').value = saved.fabricControllerUrl ?? '';
+    input('fabricUserId').value = saved.fabricUserId ?? '';
   } catch {
     localStorage.removeItem('joiner:lastSettings');
   }
@@ -132,9 +135,17 @@ downloadLogsBtn.addEventListener('click', () => {
 });
 
 function refreshPlatformHint() {
-  const p = detectPlatform(linkInput.value.trim());
-  platformHint.textContent = `Detected platform: ${platformLabel(p)}`;
+  const link = linkInput.value.trim();
+  const fabricAuto = link.toLowerCase().startsWith('fabric://');
+  const p = detectPlatform(link);
+  platformHint.textContent = fabricAuto
+    ? 'Detected platform: Zorin Fabric · AUTO'
+    : `Detected platform: ${platformLabel(p)}`;
   platformHint.dataset.detected = p ?? '';
+  if (fabricAuto && !serviceControl.checked) {
+    serviceControl.checked = true;
+    refreshServiceVisibility();
+  }
 }
 linkInput.addEventListener('input', refreshPlatformHint);
 refreshPlatformHint();
@@ -169,7 +180,8 @@ function renderEgresses() {
     option.value = egress.id;
     const probe = egressProbes.get(egress.id);
     const state = probe ? (probe.available ? `${probe.latencyMs} ms` : 'unavailable') : 'probing...';
-    option.label = `${egress.id}${egress.isDefault ? ' (default)' : ''} — ${state}`;
+    const title = egress.displayName || egress.id;
+    option.label = `${title}${egress.isDefault ? ' (default)' : ''} — ${state}`;
     return option;
   }));
   if (discoveredEgresses.length === 0) {
@@ -179,7 +191,8 @@ function renderEgresses() {
   egressStatus.textContent = discoveredEgresses.map((egress) => {
     const probe = egressProbes.get(egress.id);
     const state = probe ? (probe.available ? `${probe.latencyMs} ms` : 'offline') : '...';
-    return `${egress.id}${egress.isDefault ? '*' : ''}: ${state}`;
+    const title = egress.displayName || egress.id;
+    return `${title}${egress.isDefault ? '*' : ''}: ${state}`;
   }).join(' · ');
 }
 
@@ -192,7 +205,7 @@ startBtn.addEventListener('click', async () => {
   }
   const platform = detectPlatform(link);
   if (!platform) {
-    appendLog('[ui] link does not look like a WB Stream or Telemost call\n');
+    appendLog('[ui] unsupported call/Fabric link\n');
     return;
   }
   const settings = {
@@ -210,10 +223,13 @@ startBtn.addEventListener('click', async () => {
     dns: input('dns').value.trim() || '1.1.1.1,8.8.8.8',
     noTun: input('noTun').checked,
     dualTrack: input('dualTrack').checked,
-    serviceControl: input('serviceControl').checked,
+    serviceControl: input('serviceControl').checked || link.toLowerCase().startsWith('fabric://'),
     serviceWorkPlatform: select('serviceWorkPlatform').value,
+    fabricControllerUrl: input('fabricControllerUrl').value.trim(),
+    fabricUserId: input('fabricUserId').value.trim(),
+    fabricCredential: input('fabricCredential').value.trim(),
   };
-  localStorage.setItem('joiner:lastSettings', JSON.stringify(settings));
+  localStorage.setItem('joiner:lastSettings', JSON.stringify({ ...settings, fabricCredential: '' }));
   const r = await bridge.start(settings);
   if (!r.ok) appendLog(`[ui] start failed: ${r.error}\n`);
 });

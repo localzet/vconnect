@@ -58,12 +58,17 @@ type ControlError struct {
 }
 
 type EgressDescriptor struct {
-	ID        string `json:"id"`
-	IsDefault bool   `json:"isDefault"`
+	ID          string `json:"id"`
+	IsDefault   bool   `json:"isDefault"`
+	DisplayName string `json:"displayName,omitempty"`
+	Region      string `json:"region,omitempty"`
+	Mode        string `json:"mode,omitempty"`
+	Auto        bool   `json:"auto,omitempty"`
 }
 
 type EgressListRequest struct {
-	UserID string `json:"userId,omitempty"`
+	UserID     string `json:"userId,omitempty"`
+	Credential string `json:"credential,omitempty"`
 }
 
 type EgressList struct {
@@ -82,11 +87,12 @@ type EgressProbeResult struct {
 }
 
 type SessionCreateRequest struct {
-	RequestID string `json:"requestId"`
-	UserID    string `json:"userId,omitempty"`
-	EgressID  string `json:"egressId"`
-	Platform  string `json:"platform,omitempty"`
-	Mode      string `json:"mode,omitempty"`
+	RequestID  string `json:"requestId"`
+	UserID     string `json:"userId,omitempty"`
+	Credential string `json:"credential,omitempty"`
+	EgressID   string `json:"egressId"`
+	Platform   string `json:"platform,omitempty"`
+	Mode       string `json:"mode,omitempty"`
 }
 
 type SessionReady struct {
@@ -98,11 +104,12 @@ type SessionReady struct {
 }
 
 type CookieSubmit struct {
-	RequestID string `json:"requestId"`
-	UserID    string `json:"userId,omitempty"`
-	Platform  string `json:"platform"`
-	Format    string `json:"format"`
-	Payload   string `json:"payload"`
+	RequestID  string `json:"requestId"`
+	UserID     string `json:"userId,omitempty"`
+	Credential string `json:"credential,omitempty"`
+	Platform   string `json:"platform"`
+	Format     string `json:"format"`
+	Payload    string `json:"payload"`
 }
 
 type CookieAck struct {
@@ -181,7 +188,11 @@ func EncodeEgressListPayload(egresses []EgressDescriptor) []byte {
 }
 
 func EncodeEgressListRequestPayload(userID string) []byte {
-	return encodeControlJSON(EgressListRequest{UserID: userID})
+	return EncodeEgressListRequestPayloadWithCredential(userID, "")
+}
+
+func EncodeEgressListRequestPayloadWithCredential(userID, credential string) []byte {
+	return encodeControlJSON(EgressListRequest{UserID: userID, Credential: credential})
 }
 
 func DecodeEgressListRequest(payload []byte) (EgressListRequest, bool) {

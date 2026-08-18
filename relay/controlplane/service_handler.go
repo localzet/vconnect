@@ -16,6 +16,7 @@ type SessionController interface {
 type ServiceHandler struct {
 	UserID         string
 	AllowedUserIDs map[string]struct{}
+	Authorizer     UserAuthorizer
 	CookieVault    *CookieVault
 	Sessions       SessionController
 }
@@ -24,12 +25,12 @@ func (h ServiceHandler) BindBridge(ctx context.Context, bridge *tunnel.RelayBrid
 	if bridge == nil {
 		return errors.New("controlplane: relay bridge is required")
 	}
-	if h.UserID == "" && len(h.AllowedUserIDs) == 0 {
-		return errors.New("controlplane: at least one user id is required")
+	if h.Authorizer == nil && h.UserID == "" && len(h.AllowedUserIDs) == 0 {
+		return errors.New("controlplane: user authorization is not configured")
 	}
 	if h.CookieVault != nil {
 		bridge.SetOnCookieSubmit(func(submit tunnel.CookieSubmit) (tunnel.CookieAck, error) {
-			userID, err := h.authorizeUser(submit.UserID)
+			userID, err := h.authorizeUser(ctx, submit.UserID, submit.Credential)
 			if err != nil {
 				return tunnel.CookieAck{}, err
 			}
@@ -38,7 +39,7 @@ func (h ServiceHandler) BindBridge(ctx context.Context, bridge *tunnel.RelayBrid
 	}
 	if h.Sessions != nil {
 		bridge.SetOnSessionCreate(func(request tunnel.SessionCreateRequest) (tunnel.SessionReady, error) {
-			userID, err := h.authorizeUser(request.UserID)
+			userID, err := h.authorizeUser(ctx, request.UserID, request.Credential)
 			if err != nil {
 				return tunnel.SessionReady{}, err
 			}
@@ -46,7 +47,7 @@ func (h ServiceHandler) BindBridge(ctx context.Context, bridge *tunnel.RelayBrid
 		})
 	}
 	bridge.SetOnEgressListRequest(func(request tunnel.EgressListRequest) ([]tunnel.EgressDescriptor, error) {
-		if _, err := h.authorizeUser(request.UserID); err != nil {
+		if _, err := h.authorizeUser(ctx, request.UserID, request.Credential); err != nil {
 			return nil, err
 		}
 		return nil, nil
@@ -54,8 +55,11 @@ func (h ServiceHandler) BindBridge(ctx context.Context, bridge *tunnel.RelayBrid
 	return nil
 }
 
-func (h ServiceHandler) authorizeUser(requested string) (string, error) {
+func (h ServiceHandler) authorizeUser(ctx context.Context, requested, credential string) (string, error) {
 	requested = strings.TrimSpace(requested)
+	if h.Authorizer != nil {
+		return h.Authorizer.AuthorizeUser(ctx, requested, credential)
+	}
 	if len(h.AllowedUserIDs) > 0 {
 		if _, ok := h.AllowedUserIDs[requested]; !ok {
 			return "", fmt.Errorf("controlplane: user is not authorized")

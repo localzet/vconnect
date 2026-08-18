@@ -12,7 +12,7 @@ func TestEgressDiscoveryPayloads(t *testing.T) {
 		t.Fatalf("empty egress list request = %+v, %v", emptyRequest, ok)
 	}
 
-	want := []EgressDescriptor{{ID: "ee", IsDefault: true}, {ID: "fi"}}
+	want := []EgressDescriptor{{ID: "auto", IsDefault: true, DisplayName: "AUTO · best EU route", Region: "AUTO", Mode: "direct", Auto: true}, {ID: "fi-direct", DisplayName: "FI · direct", Region: "FI", Mode: "direct"}}
 	list, ok := DecodeEgressList(EncodeEgressListPayload(want))
 	if !ok || len(list.Egresses) != 2 || list.Egresses[0] != want[0] || list.Egresses[1] != want[1] {
 		t.Fatalf("egress list round trip = %+v, %v", list, ok)

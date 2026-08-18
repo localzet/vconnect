@@ -149,15 +149,22 @@ object Prefs {
         }.getOrDefault(AccentMode.CYAN)
         set(value) = prefs.edit { putString(PrefsKeys.ACCENT_MODE, value.name) }
 
-    val serviceUserId: String
+    var serviceUserId: String
         get() {
-            prefs.getString(PrefsKeys.SERVICE_USER_ID, null)?.let { stored ->
-                runCatching { UUID.fromString(stored).toString() }.getOrNull()?.let { return it }
-            }
+            prefs.getString(PrefsKeys.SERVICE_USER_ID, null)?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
             return UUID.randomUUID().toString().also { value ->
                 prefs.edit(commit = true) { putString(PrefsKeys.SERVICE_USER_ID, value) }
             }
         }
+        set(value) = prefs.edit(commit = true) { putString(PrefsKeys.SERVICE_USER_ID, value.trim()) }
+
+    var serviceCredential: String
+        get() = prefs.getString(PrefsKeys.SERVICE_CREDENTIAL, "")?.trim().orEmpty()
+        set(value) = prefs.edit(commit = true) { putString(PrefsKeys.SERVICE_CREDENTIAL, value.trim()) }
+
+    var fabricControllerUrl: String
+        get() = prefs.getString(PrefsKeys.FABRIC_CONTROLLER_URL, "")?.trim().orEmpty()
+        set(value) = prefs.edit(commit = true) { putString(PrefsKeys.FABRIC_CONTROLLER_URL, value.trim()) }
 
     val activeDestination: CallConfig?
         get() {

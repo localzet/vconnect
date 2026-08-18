@@ -135,6 +135,50 @@ class SettingsScreenFragment : Fragment(R.layout.fragment_settings_screen) {
             clipboard.setPrimaryClip(ClipData.newPlainText(getString(R.string.service_client_id), Prefs.serviceUserId))
             Toast.makeText(requireContext(), R.string.service_client_id_copied, Toast.LENGTH_SHORT).show()
         }
+        addRow(
+            card,
+            R.drawable.ic_setting_proxy,
+            getString(R.string.fabric_controller_title),
+            Prefs.fabricControllerUrl.ifBlank { getString(R.string.fabric_controller_not_configured) },
+            null,
+        ) {
+            InputActionSheet.show(
+                manager = parentFragmentManager,
+                title = getString(R.string.fabric_controller_title),
+                subtitle = getString(R.string.fabric_controller_subtitle),
+                fieldLabel = getString(R.string.fabric_controller_field),
+                initialValue = Prefs.fabricControllerUrl,
+                hint = "https://fabric.example.com",
+            ) { value ->
+                Prefs.fabricControllerUrl = value.trim()
+                rebuild()
+            }
+        }
+        addRow(
+            card,
+            R.drawable.ic_setting_autofill,
+            getString(R.string.fabric_access_title),
+            if (Prefs.serviceCredential.isBlank()) getString(R.string.fabric_access_not_configured) else getString(R.string.fabric_access_configured),
+            null,
+        ) {
+            InputActionSheet.show(
+                manager = parentFragmentManager,
+                title = getString(R.string.fabric_access_title),
+                subtitle = getString(R.string.fabric_access_subtitle),
+                fieldLabel = getString(R.string.fabric_access_field),
+                initialValue = if (Prefs.serviceCredential.isBlank()) "" else "${Prefs.serviceUserId}:${Prefs.serviceCredential}",
+                hint = "shortUuid:credential",
+            ) { value ->
+                val separator = value.indexOf(':')
+                if (separator > 0 && separator < value.length - 1) {
+                    Prefs.serviceUserId = value.substring(0, separator).trim()
+                    Prefs.serviceCredential = value.substring(separator + 1).trim()
+                    rebuild()
+                } else {
+                    Toast.makeText(requireContext(), R.string.fabric_access_invalid, Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
 
         return section
     }

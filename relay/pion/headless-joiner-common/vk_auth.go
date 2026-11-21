@@ -15,7 +15,6 @@ import (
 	"vconnect/relay/common"
 )
 
-
 type vkConfig struct {
 	AppID           string `json:"appID"`
 	ApiVersion      string `json:"apiVersion"`
@@ -44,11 +43,21 @@ func RunVKAuth(joinLink string, displayName string, logFn func(string, ...any), 
 			return (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, network, resolvedIP+":"+port)
 		}
 	}
-	client := &http.Client{Timeout: 60 * time.Second, Transport: transport}
-
+	client := &http.Client{
+		Timeout:       60 * time.Second,
+		CheckRedirect: checkSecureRedirect,
+		Transport:     transport,
+	}
 
 	httpPost := func(targetURL string, form url.Values, extraHeaders map[string]string) (map[string]interface{}, error) {
-		req, _ := http.NewRequest("POST", targetURL, strings.NewReader(form.Encode()))
+		secureURL, err := parseSecureURL(targetURL, "https", "VK API URL")
+		if err != nil {
+			return nil, err
+		}
+		req, err := http.NewRequest("POST", secureURL.String(), strings.NewReader(form.Encode()))
+		if err != nil {
+			return nil, err
+		}
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("User-Agent", common.UserAgent)
 		req.Header.Set("Origin", "https://vk.com")
@@ -186,15 +195,15 @@ func RunVKAuth(joinLink string, displayName string, logFn func(string, ...any), 
 					captchaAttempt = "1"
 				}
 				callParams = url.Values{
-					"v":               {cfg.ApiVersion},
-					"vk_join_link":    {joinLink},
-					"name":            {displayName},
-					"captcha_key":     {""},
-					"captcha_sid":     {captchaErr.captchaSid},
+					"v":                {cfg.ApiVersion},
+					"vk_join_link":     {joinLink},
+					"name":             {displayName},
+					"captcha_key":      {""},
+					"captcha_sid":      {captchaErr.captchaSid},
 					"is_sound_captcha": {"0"},
-					"success_token":   {successToken},
-					"captcha_ts":      {captchaErr.captchaTs},
-					"captcha_attempt": {captchaAttempt},
+					"success_token":    {successToken},
+					"captcha_ts":       {captchaErr.captchaTs},
+					"captcha_attempt":  {captchaAttempt},
 				}
 				continue
 			}

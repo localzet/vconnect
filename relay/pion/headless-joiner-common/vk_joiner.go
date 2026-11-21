@@ -2,7 +2,6 @@ package joiner
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,7 +23,7 @@ import (
 const (
 	vkReconnectInitialDelay = time.Second
 	vkReconnectMaxDelay     = 16 * time.Second
-	vkMaxReconnectAttempts = 10
+	vkMaxReconnectAttempts  = 10
 )
 
 const vkTopologyDirect = "DIRECT"
@@ -186,8 +185,7 @@ func (h *VKHeadlessJoiner) runOnce() error {
 	if err := h.joinCall(); err != nil {
 		return err
 	}
-	h.connectSFU()
-	return nil
+	return h.connectSFU()
 }
 
 func (h *VKHeadlessJoiner) waitBeforeRetry(attempt int) bool {
@@ -268,9 +266,9 @@ func (h *VKHeadlessJoiner) Close() {
 
 func (h *VKHeadlessJoiner) joinCall() error {
 	apiURL := h.authParams.APIBaseURL
-	parsed, err := url.Parse(apiURL)
+	parsed, err := parseSecureURL(apiURL, "https", "apiBaseURL")
 	if err != nil {
-		return fmt.Errorf("bad apiBaseURL: %w", err)
+		return err
 	}
 	resolvedIP, err := h.ResolveFn(parsed.Hostname())
 	if err != nil {
@@ -295,9 +293,10 @@ func (h *VKHeadlessJoiner) joinCall() error {
 	}
 
 	client := &http.Client{
-		Timeout: 15 * time.Second,
+		Timeout:       15 * time.Second,
+		CheckRedirect: checkSecureRedirect,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true, ServerName: parsed.Hostname()},
+			TLSClientConfig: verifiedTLSConfig(parsed.Hostname(), nil),
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				_, port, _ := net.SplitHostPort(addr)
 				return (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, network, resolvedIP+":"+port)
@@ -372,18 +371,18 @@ func truncateBody(raw []byte) string {
 	return string(raw)
 }
 
-func (h *VKHeadlessJoiner) connectSFU() {
-	parsed, err := url.Parse(h.joinResp.Endpoint)
+func (h *VKHeadlessJoiner) connectSFU() error {
+	parsed, err := parseSecureURL(h.joinResp.Endpoint, "wss", "endpoint")
 	if err != nil {
-		h.logFn("headless: bad endpoint URL: %s", common.MaskError(err))
-		return
+		h.logFn("headless: rejected insecure or invalid WebSocket endpoint")
+		return err
 	}
 
 	hostname := parsed.Hostname()
 	resolvedIP, err := h.ResolveFn(hostname)
 	if err != nil {
 		h.logFn("headless: DNS resolve failed: %s", common.MaskError(err))
-		return
+		return nil
 	}
 	h.logFn("headless: resolved %s -> %s", common.MaskAddr(hostname), common.MaskAddr(resolvedIP))
 
@@ -397,15 +396,7 @@ func (h *VKHeadlessJoiner) connectSFU() {
 		"&version=" + h.authParams.ProtocolVersion +
 		"&device=browser&capabilities=" + capabilities + "&clientType=VK&tgt=join"
 
-	dialer := websocket.Dialer{
-		HandshakeTimeout: 10 * time.Second,
-		WriteBufferSize:  65536,
-		TLSClientConfig:  &tls.Config{InsecureSkipVerify: true, ServerName: hostname},
-		NetDialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			_, port, _ := net.SplitHostPort(addr)
-			return (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, network, resolvedIP+":"+port)
-		},
-	}
+	dialer := newResolvedWebSocketDialer(resolvedIP, hostname, nil)
 
 	header := http.Header{}
 	header.Set("User-Agent", common.UserAgent)
@@ -414,7 +405,7 @@ func (h *VKHeadlessJoiner) connectSFU() {
 	ws, _, err := dialer.Dial(wsURL, header)
 	if err != nil {
 		h.logFn("headless: WS connect failed: %s", common.MaskError(err))
-		return
+		return nil
 	}
 	h.vkMu.Lock()
 	h.vkWs = ws
@@ -435,6 +426,7 @@ func (h *VKHeadlessJoiner) connectSFU() {
 
 	go h.pingLoop()
 	h.readLoop()
+	return nil
 }
 
 func (h *VKHeadlessJoiner) vkSend(command string, extra map[string]interface{}) {

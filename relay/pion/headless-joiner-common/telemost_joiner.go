@@ -2,7 +2,7 @@ package joiner
 
 import (
 	"context"
-	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -302,12 +302,13 @@ func (j *TelemostHeadlessJoiner) makeHTTPClient() *http.Client {
 		}
 	}
 	return &http.Client{
-		Timeout: 30 * time.Second,
+		Timeout:       30 * time.Second,
+		CheckRedirect: checkSecureRedirect,
 		Transport: &http.Transport{
 			Proxy:                 http.ProxyFromEnvironment,
 			ForceAttemptHTTP2:     false,
 			DialContext:           dialContext,
-			TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
+			TLSClientConfig:       verifiedTLSConfig("", nil),
 			TLSHandshakeTimeout:   10 * time.Second,
 			ResponseHeaderTimeout: 20 * time.Second,
 			IdleConnTimeout:       60 * time.Second,
@@ -1031,13 +1032,17 @@ func (j *TelemostHeadlessJoiner) parseICEServersFromHello(sh map[string]interfac
 }
 
 func (j *TelemostHeadlessJoiner) connectAndRun() {
+	j.connectAndRunWithTLSRoots(nil)
+}
+
+func (j *TelemostHeadlessJoiner) connectAndRunWithTLSRoots(roots *x509.CertPool) {
 	if j.isClosed() {
 		return
 	}
-	parsed, err := url.Parse(j.mediaURL)
+	parsed, err := parseSecureURL(j.mediaURL, "wss", "media URL")
 	if err != nil {
-		j.logFn("telemost-joiner: ERROR: bad media URL: %s", common.MaskError(err))
-		j.Status.EmitStatusError("bad media URL")
+		j.logFn("telemost-joiner: ERROR: rejected insecure or invalid media URL")
+		j.Status.EmitStatusError("invalid secure media URL")
 		return
 	}
 
@@ -1055,15 +1060,7 @@ func (j *TelemostHeadlessJoiner) connectAndRun() {
 	wsHeader.Set("Origin", TmOrigin)
 
 	j.logFn("telemost-joiner: connecting to %s", j.mediaURL)
-	dialer := websocket.Dialer{
-		HandshakeTimeout: 10 * time.Second,
-		WriteBufferSize:  65536,
-		TLSClientConfig:  &tls.Config{InsecureSkipVerify: true, ServerName: hostname},
-		NetDialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			_, port, _ := net.SplitHostPort(addr)
-			return (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, network, resolvedIP+":"+port)
-		},
-	}
+	dialer := newResolvedWebSocketDialer(resolvedIP, hostname, roots)
 	sessionCtx, cancelSession := context.WithCancel(j.ctx)
 	defer cancelSession()
 	ws, _, err := dialer.DialContext(sessionCtx, j.mediaURL, wsHeader)

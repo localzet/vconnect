@@ -2,6 +2,7 @@ package joiner
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"io"
 	"net/http"
@@ -94,6 +95,8 @@ func TestCloseUnblocksTelemostWebSocketLoop(t *testing.T) {
 		return host, nil
 	}, nil, nil, nil, nil)
 	joiner.mediaURL = "wss" + strings.TrimPrefix(server.URL, "https")
+	roots := x509.NewCertPool()
+	roots.AddCert(server.Certificate())
 	joiner.displayName = "test"
 	joiner.httpClient = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return &http.Response{
@@ -105,7 +108,7 @@ func TestCloseUnblocksTelemostWebSocketLoop(t *testing.T) {
 
 	connectDone := make(chan struct{})
 	go func() {
-		joiner.connectAndRun()
+		joiner.connectAndRunWithTLSRoots(roots)
 		close(connectDone)
 	}()
 

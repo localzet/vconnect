@@ -149,15 +149,15 @@ func TestServiceHandlerRejectsInvalidBinding(t *testing.T) {
 func TestServiceHandlerAuthorizesListedUsers(t *testing.T) {
 	handler := ServiceHandler{AllowedUserIDs: map[string]struct{}{"user-1": {}, "user-2": {}}}
 	for _, userID := range []string{"user-1", "user-2"} {
-		got, err := handler.authorizeUser(userID)
+		got, err := handler.authorizeUser(context.Background(), userID, "")
 		if err != nil || got != userID {
 			t.Fatalf("authorizeUser(%q) = %q, %v", userID, got, err)
 		}
 	}
-	if _, err := handler.authorizeUser("user-3"); err == nil {
+	if _, err := handler.authorizeUser(context.Background(), "user-3", ""); err == nil {
 		t.Fatal("authorizeUser() expected unauthorized error")
 	}
-	if _, err := handler.authorizeUser(""); err == nil {
+	if _, err := handler.authorizeUser(context.Background(), "", ""); err == nil {
 		t.Fatal("authorizeUser() expected empty user error")
 	}
 }

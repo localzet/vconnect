@@ -53,7 +53,8 @@ func startStdinDispatcher() {
 func isCommandLine(line string) bool {
 	return strings.HasPrefix(line, "JOIN:") ||
 		strings.HasPrefix(line, "AUTH:") ||
-		strings.HasPrefix(line, "SERVICE_EGRESS:")
+		strings.HasPrefix(line, "SERVICE_EGRESS:") ||
+		line == "STOP"
 }
 
 func ReadStdinLine() (string, error) {

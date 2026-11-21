@@ -82,6 +82,10 @@ type TelemostHeadlessJoiner struct {
 
 	closeMu sync.Mutex
 	closed  bool
+	ctx     context.Context
+	cancel  context.CancelFunc
+
+	resourceMu sync.Mutex
 
 	stopCh           chan struct{}
 	stopOnce         sync.Once
@@ -97,6 +101,7 @@ type TelemostHeadlessJoiner struct {
 }
 
 func NewTelemostHeadlessJoiner(logFn func(string, ...any), resolveFn ResolveFunc, status StatusEmitter, pcConfig PeerConnectionConfigurer, addTracks AddTunnelTracksFunc, readTrackFn ReadTrackFunc) *TelemostHeadlessJoiner {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &TelemostHeadlessJoiner{
 		logFn:       logFn,
 		ResolveFn:   resolveFn,
@@ -106,6 +111,8 @@ func NewTelemostHeadlessJoiner(logFn func(string, ...any), resolveFn ResolveFunc
 		ReadTrackFn: readTrackFn,
 		instanceID:  uuid.New().String(),
 		stopCh:      make(chan struct{}),
+		ctx:         ctx,
+		cancel:      cancel,
 	}
 }
 
@@ -177,8 +184,14 @@ func (j *TelemostHeadlessJoiner) RunWithParams(jsonParams string) {
 }
 
 func (j *TelemostHeadlessJoiner) runOnce() error {
+	if j.isClosed() {
+		return context.Canceled
+	}
 	if err := j.getConnection(); err != nil {
 		return err
+	}
+	if j.isClosed() {
+		return context.Canceled
 	}
 	j.connectAndRun()
 	return nil
@@ -190,6 +203,10 @@ func (j *TelemostHeadlessJoiner) waitBeforeRetry(attempt int) bool {
 		delay = telemostReconnectMaxDelay
 	}
 	j.logFn("telemost-joiner: waiting %s before reconnect", delay)
+	return j.waitForStopOrDelay(delay)
+}
+
+func (j *TelemostHeadlessJoiner) waitForStopOrDelay(delay time.Duration) bool {
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {
@@ -212,8 +229,10 @@ func (j *TelemostHeadlessJoiner) resetSessionState() {
 	j.pubSeq = 0
 	j.pubRemoteSet = false
 	j.pubPending = nil
+	j.resourceMu.Lock()
 	j.sampleTrack = nil
-	j.vp8tunnel = nil
+	j.resourceMu.Unlock()
+	j.stopVP8Tunnel()
 	j.initBundleSent = false
 	j.boundMu.Lock()
 	j.boundPeers = nil
@@ -223,9 +242,14 @@ func (j *TelemostHeadlessJoiner) resetSessionState() {
 
 func (j *TelemostHeadlessJoiner) Close() {
 	j.closeMu.Lock()
+	if j.closed {
+		j.closeMu.Unlock()
+		return
+	}
 	j.closed = true
-	j.closeMu.Unlock()
+	j.cancel()
 	j.stopOnce.Do(func() { close(j.stopCh) })
+	j.closeMu.Unlock()
 	j.wsMu.Lock()
 	ws := j.ws
 	j.ws = nil
@@ -233,21 +257,28 @@ func (j *TelemostHeadlessJoiner) Close() {
 	if ws != nil {
 		ws.Close()
 	}
-	if j.vp8tunnel != nil {
-		j.vp8tunnel.Stop()
-	}
-	if j.subPC != nil {
-		j.subPC.Close()
-	}
-	if j.pubPC != nil {
-		j.pubPC.Close()
-	}
 }
 
 func (j *TelemostHeadlessJoiner) isClosed() bool {
 	j.closeMu.Lock()
 	defer j.closeMu.Unlock()
 	return j.closed
+}
+
+func (j *TelemostHeadlessJoiner) currentVP8Tunnel() *tunnel.VP8DataTunnel {
+	j.resourceMu.Lock()
+	defer j.resourceMu.Unlock()
+	return j.vp8tunnel
+}
+
+func (j *TelemostHeadlessJoiner) stopVP8Tunnel() {
+	j.resourceMu.Lock()
+	vp8tunnel := j.vp8tunnel
+	j.vp8tunnel = nil
+	j.resourceMu.Unlock()
+	if vp8tunnel != nil {
+		vp8tunnel.Stop()
+	}
 }
 
 func (j *TelemostHeadlessJoiner) makeHTTPClient() *http.Client {
@@ -292,11 +323,11 @@ func (j *TelemostHeadlessJoiner) apiClient() *tmapi.Client {
 }
 
 func (j *TelemostHeadlessJoiner) tmRequest(method, path string) ([]byte, int, error) {
-	return j.apiClient().Do(method, path, nil)
+	return j.apiClient().DoContext(j.ctx, method, path, nil)
 }
 
-func (j *TelemostHeadlessJoiner) requestStates() error {
-	return j.apiClient().RequestStates(j.joinLink, j.peerID)
+func (j *TelemostHeadlessJoiner) requestStates(ctx context.Context) error {
+	return j.apiClient().RequestStatesContext(ctx, j.joinLink, j.peerID)
 }
 
 func (j *TelemostHeadlessJoiner) getConnection() error {
@@ -316,6 +347,9 @@ func (j *TelemostHeadlessJoiner) getConnection() error {
 	if status != 200 {
 		return fmt.Errorf("get connection: status %d: %s", status, string(responseBody))
 	}
+	if j.isClosed() {
+		return context.Canceled
+	}
 
 	var initial struct {
 		ConnectionType string `json:"connection_type"`
@@ -333,7 +367,9 @@ func (j *TelemostHeadlessJoiner) getConnection() error {
 		checkPath := "/conferences/" + confURL + "/waiting-rooms/check-access"
 		j.logFn("telemost-joiner: in waiting room, polling check-access every %dms...", interval)
 		for {
-			time.Sleep(time.Duration(interval) * time.Millisecond)
+			if !j.waitForStopOrDelay(time.Duration(interval) * time.Millisecond) {
+				return context.Canceled
+			}
 			checkBody, checkStatus, checkErr := j.tmRequest("GET", checkPath)
 			if checkErr != nil {
 				return fmt.Errorf("waiting room check-access: %w", checkErr)
@@ -357,6 +393,9 @@ func (j *TelemostHeadlessJoiner) getConnection() error {
 		if status != 200 {
 			return fmt.Errorf("post-admit connection: status %d: %s", status, string(responseBody))
 		}
+	}
+	if j.isClosed() {
+		return context.Canceled
 	}
 
 	var conn struct {
@@ -469,6 +508,10 @@ func (j *TelemostHeadlessJoiner) initPC() {
 		j.logFn("telemost-joiner: ERROR: create sub PC: %v", err)
 		return
 	}
+	if j.isClosed() {
+		subPC.Close()
+		return
+	}
 	j.subPC = subPC
 
 	subPC.OnICECandidate(func(cand *webrtc.ICECandidate) {
@@ -488,8 +531,8 @@ func (j *TelemostHeadlessJoiner) initPC() {
 	subPC.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
 		j.logFn("telemost-joiner: sub remote track: %s", track.Codec().MimeType)
 		go j.ReadTrackFn(track, func(frame []byte) {
-			if j.vp8tunnel != nil {
-				j.vp8tunnel.HandleFrame(frame)
+			if vp8tunnel := j.currentVP8Tunnel(); vp8tunnel != nil {
+				vp8tunnel.HandleFrame(frame)
 			}
 		}, j.logFn, "telemost-joiner")
 	})
@@ -499,10 +542,17 @@ func (j *TelemostHeadlessJoiner) initPC() {
 		j.logFn("telemost-joiner: ERROR: create pub PC: %v", err)
 		return
 	}
+	if j.isClosed() {
+		pubPC.Close()
+		return
+	}
 	j.pubPC = pubPC
 	j.pubSeq = 1
 
-	j.sampleTrack = j.AddTracks(pubPC, j.logFn, "telemost-joiner [pub]")
+	sampleTrack := j.AddTracks(pubPC, j.logFn, "telemost-joiner [pub]")
+	j.resourceMu.Lock()
+	j.sampleTrack = sampleTrack
+	j.resourceMu.Unlock()
 
 	pubPC.OnICECandidate(func(cand *webrtc.ICECandidate) {
 		if cand != nil {
@@ -512,16 +562,28 @@ func (j *TelemostHeadlessJoiner) initPC() {
 
 	pubPC.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		j.logFn("telemost-joiner: pub PC state: %s", state.String())
-		if state == webrtc.PeerConnectionStateConnected && j.vp8tunnel == nil {
+		if state != webrtc.PeerConnectionStateConnected {
+			return
+		}
+
+		j.resourceMu.Lock()
+		if j.isClosed() || j.vp8tunnel != nil {
+			j.resourceMu.Unlock()
+			return
+		}
+		vp8tunnel := tunnel.NewVP8DataTunnel(j.sampleTrack, j.obf, j.logFn)
+		j.vp8tunnel = vp8tunnel
+		vp8tunnel.Start(j.vp8FPS, j.vp8Batch)
+		vp8tunnel.SendData(tunnel.EncodeVP8Config(vp8tunnel.FPS(), vp8tunnel.Batch(), 1))
+		j.resourceMu.Unlock()
+
+		if !j.isClosed() {
 			j.reconnectAttempt.Store(0)
 			j.logFn("telemost-joiner: === VP8 TUNNEL CONNECTED ===")
 			j.Status.EmitStatus(common.StatusTunnelConnected)
-			j.vp8tunnel = tunnel.NewVP8DataTunnel(j.sampleTrack, j.obf, j.logFn)
-			j.vp8tunnel.Start(j.vp8FPS, j.vp8Batch)
-			j.vp8tunnel.SendData(tunnel.EncodeVP8Config(j.vp8tunnel.FPS(), j.vp8tunnel.Batch(), 1))
-			j.logFn("telemost-joiner: pushed vp8 config to creator fps=%d batch=%d", j.vp8tunnel.FPS(), j.vp8tunnel.Batch())
+			j.logFn("telemost-joiner: pushed vp8 config to creator fps=%d batch=%d", vp8tunnel.FPS(), vp8tunnel.Batch())
 			if j.OnConnected != nil {
-				j.OnConnected(j.vp8tunnel)
+				j.OnConnected(vp8tunnel)
 			}
 		}
 	})
@@ -969,6 +1031,9 @@ func (j *TelemostHeadlessJoiner) parseICEServersFromHello(sh map[string]interfac
 }
 
 func (j *TelemostHeadlessJoiner) connectAndRun() {
+	if j.isClosed() {
+		return
+	}
 	parsed, err := url.Parse(j.mediaURL)
 	if err != nil {
 		j.logFn("telemost-joiner: ERROR: bad media URL: %s", common.MaskError(err))
@@ -999,15 +1064,24 @@ func (j *TelemostHeadlessJoiner) connectAndRun() {
 			return (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, network, resolvedIP+":"+port)
 		},
 	}
-	ws, _, err := dialer.Dial(j.mediaURL, wsHeader)
+	sessionCtx, cancelSession := context.WithCancel(j.ctx)
+	defer cancelSession()
+	ws, _, err := dialer.DialContext(sessionCtx, j.mediaURL, wsHeader)
 	if err != nil {
 		j.logFn("telemost-joiner: ERROR: ws connect: %s", common.MaskError(err))
 		j.Status.EmitStatusError("ws connect failed")
 		return
 	}
+	j.closeMu.Lock()
+	if j.closed {
+		j.closeMu.Unlock()
+		ws.Close()
+		return
+	}
 	j.wsMu.Lock()
 	j.ws = ws
 	j.wsMu.Unlock()
+	j.closeMu.Unlock()
 	j.logFn("telemost-joiner: ws connected")
 
 	j.sendHello()
@@ -1032,7 +1106,7 @@ func (j *TelemostHeadlessJoiner) connectAndRun() {
 		if interval <= 0 {
 			interval = 30
 		}
-		if err := j.requestStates(); err != nil {
+		if err := j.requestStates(sessionCtx); err != nil {
 			j.logFn("telemost-joiner: initial request-states: %v", err)
 		}
 		ticker := time.NewTicker(time.Duration(interval) * time.Second)
@@ -1041,8 +1115,10 @@ func (j *TelemostHeadlessJoiner) connectAndRun() {
 			select {
 			case <-stopStateKeepalive:
 				return
+			case <-sessionCtx.Done():
+				return
 			case <-ticker.C:
-				if err := j.requestStates(); err != nil {
+				if err := j.requestStates(sessionCtx); err != nil {
 					j.logFn("telemost-joiner: request-states: %v", err)
 				}
 			}
@@ -1050,6 +1126,9 @@ func (j *TelemostHeadlessJoiner) connectAndRun() {
 	}()
 
 	for {
+		if j.isClosed() {
+			break
+		}
 		_, raw, err := ws.ReadMessage()
 		if err != nil {
 			j.logFn("telemost-joiner: ws read error: %s", common.MaskError(err))
@@ -1060,14 +1139,19 @@ func (j *TelemostHeadlessJoiner) connectAndRun() {
 
 	close(stopPing)
 	close(stopStateKeepalive)
-	if j.vp8tunnel != nil {
-		j.vp8tunnel.Stop()
-	}
+	cancelSession()
+	j.stopVP8Tunnel()
 	if j.subPC != nil {
 		j.subPC.Close()
 	}
 	if j.pubPC != nil {
 		j.pubPC.Close()
 	}
+	j.wsMu.Lock()
+	if j.ws == ws {
+		j.ws = nil
+	}
+	j.wsMu.Unlock()
+	ws.Close()
 	j.logFn("telemost-joiner: disconnected")
 }

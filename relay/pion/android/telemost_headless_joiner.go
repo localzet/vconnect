@@ -36,6 +36,11 @@ func (j *TelemostHeadlessJoiner) Run() {
 		line, err := ReadStdinLine()
 		if err != nil {
 			log.Printf("telemost-joiner: stdin closed: %v", err)
+			j.inner.Close()
+			return
+		}
+		if line == "STOP" {
+			j.inner.Close()
 			return
 		}
 		if strings.HasPrefix(line, "JOIN:") {
@@ -47,6 +52,11 @@ func (j *TelemostHeadlessJoiner) Run() {
 		line, err := ReadStdinLine()
 		if err != nil {
 			log.Printf("telemost-joiner: stdin closed: %v", err)
+			j.inner.Close()
+			return
+		}
+		if line == "STOP" {
+			j.inner.Close()
 			return
 		}
 		if j.OnCommand != nil {

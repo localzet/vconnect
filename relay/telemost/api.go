@@ -1,6 +1,7 @@
 package telemost
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -180,12 +181,16 @@ func BriefJSON(v interface{}) string {
 }
 
 func (c *Client) Do(method, path string, body interface{}) ([]byte, int, error) {
+	return c.DoContext(context.Background(), method, path, body)
+}
+
+func (c *Client) DoContext(ctx context.Context, method, path string, body interface{}) ([]byte, int, error) {
 	var bodyReader io.Reader
 	if body != nil {
 		data, _ := json.Marshal(body)
 		bodyReader = strings.NewReader(string(data))
 	}
-	req, err := http.NewRequest(method, APIBase+path, bodyReader)
+	req, err := http.NewRequestWithContext(ctx, method, APIBase+path, bodyReader)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -224,13 +229,17 @@ func (c *Client) Do(method, path string, body interface{}) ([]byte, int, error) 
 }
 
 func (c *Client) RequestStates(joinURI, peerID string) error {
+	return c.RequestStatesContext(context.Background(), joinURI, peerID)
+}
+
+func (c *Client) RequestStatesContext(ctx context.Context, joinURI, peerID string) error {
 	confURL := url.QueryEscape(joinURI)
 	body := map[string]interface{}{
 		"peers":       []map[string]string{{"peer_id": peerID}},
 		"permissions": map[string]interface{}{},
 		"conference":  map[string]interface{}{"version": -1},
 	}
-	r, status, err := c.Do("POST", "/conferences/"+confURL+"/request-states", body)
+	r, status, err := c.DoContext(ctx, "POST", "/conferences/"+confURL+"/request-states", body)
 	if err != nil {
 		return err
 	}

@@ -24,12 +24,17 @@ var vp8Interframe = []byte{
 	0x00,
 }
 
+var vp8CoverKeyframe = []byte{
+	16, 2, 0, 157, 1, 42, 2, 0, 2, 0, 2, 7, 8, 133, 133, 136,
+	153, 132, 136, 11, 2, 0, 12, 13, 96, 0, 254, 252, 173, 16,
+}
+
 const (
-	vp8KeepaliveLen   = 20
-	vp8InterframeLen  = 17
-	epochFieldLen     = 4
-	keepaliveHdrLen   = vp8KeepaliveLen + epochFieldLen
-	interframeHdrLen  = vp8InterframeLen + epochFieldLen
+	vp8KeepaliveLen  = 20
+	vp8InterframeLen = 17
+	epochFieldLen    = 4
+	keepaliveHdrLen  = vp8KeepaliveLen + epochFieldLen
+	interframeHdrLen = vp8InterframeLen + epochFieldLen
 )
 
 var ErrEmptySecret = errors.New("tunnel: obfuscator requires a non-empty secret")
@@ -96,6 +101,12 @@ func NewTunnelObfuscator(secret []byte) (*TunnelObfuscator, error) {
 }
 
 func (o *TunnelObfuscator) LocalEpoch() uint32 { return o.localEpoch }
+
+func VP8CoverKeyframe() []byte {
+	frame := make([]byte, len(vp8CoverKeyframe))
+	copy(frame, vp8CoverKeyframe)
+	return frame
+}
 
 func (o *TunnelObfuscator) keepaliveHeader() []byte {
 	hdr := make([]byte, keepaliveHdrLen)

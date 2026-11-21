@@ -58,8 +58,14 @@ func (r *SFURelay) Init(iceServers []webrtc.ICEServer) error {
 		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus},
 		"audio", "tunnel-audio",
 	)
-	pubPC.AddTransceiverFromTrack(audioTrack, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendonly})
-	pubPC.AddTransceiverFromTrack(sampleTrack, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendonly})
+	audioTransceiver, _ := pubPC.AddTransceiverFromTrack(audioTrack, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendonly})
+	videoTransceiver, _ := pubPC.AddTransceiverFromTrack(sampleTrack, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendonly})
+	if audioTransceiver != nil {
+		go tunnel.DrainSenderRTCP(audioTransceiver.Sender())
+	}
+	if videoTransceiver != nil {
+		go tunnel.DrainSenderRTCP(videoTransceiver.Sender())
+	}
 
 	pubPC.OnICECandidate(func(cand *webrtc.ICECandidate) {
 		if cand == nil || r.OnPubICE == nil {

@@ -13,6 +13,7 @@ const (
 	defaultVP8FPS       = 24
 	defaultVP8Batch     = 30
 	keepaliveIdlePeriod = 100 * time.Millisecond
+	coverKeyframePeriod = time.Second
 	sendQueueDepth      = 128
 )
 
@@ -31,15 +32,16 @@ type VP8DataTunnel struct {
 	fps   int
 	batch int
 
-	sentFrames atomic.Uint64
-	recvFrames atomic.Uint64
+	sentFrames  atomic.Uint64
+	recvFrames  atomic.Uint64
+	coverFrames atomic.Uint64
 
 	OnData  func([]byte)
 	OnClose func()
 }
 
 func (t *VP8DataTunnel) SetOnData(fn func([]byte)) { t.OnData = fn }
-func (t *VP8DataTunnel) SetOnClose(fn func())       { t.OnClose = fn }
+func (t *VP8DataTunnel) SetOnClose(fn func())      { t.OnClose = fn }
 
 func NewVP8DataTunnel(track *webrtc.TrackLocalStaticSample, obf *TunnelObfuscator, logFn func(string, ...any)) *VP8DataTunnel {
 	return &VP8DataTunnel{
@@ -157,6 +159,7 @@ func (t *VP8DataTunnel) writerLoop() {
 
 		ticker := time.NewTicker(sampleInterval)
 		idleTicks := 0
+		nextCoverKeyframe := time.Now()
 		reconfigure := false
 
 		for !reconfigure {
@@ -168,17 +171,25 @@ func (t *VP8DataTunnel) writerLoop() {
 				reconfigure = true
 			case <-ticker.C:
 				var sample []byte
-				select {
-				case data := <-t.sendQueue:
-					sample = t.obf.EncodeData(data)
-					idleTicks = 0
-				default:
-					idleTicks++
-					if idleTicks < keepaliveEvery {
-						continue
+				isCoverKeyframe := false
+				now := time.Now()
+				if !now.Before(nextCoverKeyframe) {
+					sample = VP8CoverKeyframe()
+					isCoverKeyframe = true
+					nextCoverKeyframe = now.Add(coverKeyframePeriod)
+				} else {
+					select {
+					case data := <-t.sendQueue:
+						sample = t.obf.EncodeData(data)
+						idleTicks = 0
+					default:
+						idleTicks++
+						if idleTicks < keepaliveEvery {
+							continue
+						}
+						idleTicks = 0
+						sample = t.obf.EncodeKeepalive()
 					}
-					idleTicks = 0
-					sample = t.obf.EncodeKeepalive()
 				}
 				if sample == nil {
 					continue
@@ -188,6 +199,12 @@ func (t *VP8DataTunnel) writerLoop() {
 					continue
 				}
 				n := t.sentFrames.Add(1)
+				if isCoverKeyframe {
+					covers := t.coverFrames.Add(1)
+					if covers <= 3 || covers%60 == 0 {
+						t.logFn("vp8tunnel: sent cover keyframe #%d", covers)
+					}
+				}
 				if n <= 5 || n%500 == 0 {
 					t.logFn("vp8tunnel: sent frame #%d size=%d", n, len(sample))
 				}

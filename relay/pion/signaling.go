@@ -155,8 +155,25 @@ func AddTunnelTracks(pc *webrtc.PeerConnection, logFn func(string, ...any), pref
 	videoSender, videoErr := pc.AddTrack(sampleTrack)
 	logFn("%s: AddTrack audio: sender=%v err=%v", prefix, audioSender != nil, audioErr)
 	logFn("%s: AddTrack video: sender=%v err=%v", prefix, videoSender != nil, videoErr)
+	drainSenderRTCP(audioSender, logFn, prefix+" audio")
+	drainSenderRTCP(videoSender, logFn, prefix+" video")
 	logFn("%s: senders count: %d", prefix, len(pc.GetSenders()))
 	return sampleTrack
+}
+
+func drainSenderRTCP(sender *webrtc.RTPSender, logFn func(string, ...any), prefix string) {
+	if sender == nil {
+		return
+	}
+	go func() {
+		buf := make([]byte, 1500)
+		for {
+			if _, _, err := sender.Read(buf); err != nil {
+				logFn("%s: RTCP reader stopped: %v", prefix, err)
+				return
+			}
+		}
+	}()
 }
 
 func ParseSDPType(t string) webrtc.SDPType {

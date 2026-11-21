@@ -18,6 +18,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/pion/webrtc/v4"
 	"vconnect/relay/common"
+	"vconnect/relay/controlplane"
 	"vconnect/relay/egress"
 	tmapi "vconnect/relay/telemost"
 	"vconnect/relay/tunnel"
